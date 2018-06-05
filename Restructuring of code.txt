@@ -1,0 +1,337 @@
+/* Adrian Monges 	among003@ucr.edu
+ * 
+ * I acknowledge all content contained herein, excluding
+ * template or example code, is my own original work.
+ */ 
+
+#include <avr/io.h>
+#include <avr/interrupt.h>
+#include <timer.c>
+#include "nokia5110.c"
+#include <stdlib.h>
+
+
+
+unsigned char button;
+unsigned char button2;
+unsigned char button3;
+unsigned char button4;
+unsigned char button5;
+ int bpm = 60;
+unsigned char going; 
+char bpm_buffer[200];
+
+
+
+
+enum dance{dance_wait, left, right} state;
+enum dancefloor{one, two} floor_state;	
+enum buttons{wait_for_press, wait_for_release} button_state;	
+
+
+void set_Duty_cycle(double dutyValue);
+void PWM_on();
+double calculate_Mili();
+void buttonStuff();
+void setDance();
+void setDanceFloor();
+void PWM_off();
+void buttonActions();
+
+
+void buttonStuff(){
+	
+	switch(button_state){
+		
+		
+		case wait_for_press:
+		buttonActions();
+		if (button || button2 || button3 || button4 || button5){
+			button_state = wait_for_release;
+		}
+		
+		break;
+		
+		case wait_for_release:
+		if(!button && !button2 &! button3 && !button4 && !button5){
+			button_state = wait_for_press;
+		}
+		break;
+		
+		
+	}
+	
+	
+	
+	
+}
+
+void setDance(){
+	switch(state){
+		case dance_wait:
+		if (going){
+			PWM_on();
+			state = left;
+		}
+		
+		break;
+		
+		case left:
+		if (going){
+			state = right;
+		}
+		else state = dance_wait;
+		break;
+		
+		case right:
+		if (going){
+			state = left;
+		}
+		else state = dance_wait;
+		
+		break;
+	}
+	switch(state){
+		
+		case dance_wait:
+		PWM_off();
+		break;
+		case left:
+		PWM_on();
+		set_Duty_cycle(200);
+		
+		break;
+		case right:
+		PWM_on();
+		set_Duty_cycle(6000);
+		
+		break;
+		
+	}
+	
+}
+
+void setDanceFloor(){
+	switch(floor_state){
+		case one:
+		floor_state = two;
+		break;
+		case two:
+		floor_state = one;
+		break;
+		
+	}
+	
+	switch (floor_state) {
+		case one:
+		PORTC = 0xAA;			//COLUMNS: Which column has power.
+		PORTA = 0x00;			//ROWS: How many are not lit up.
+		//PORTA = 0x01;
+		break;
+		
+		case two:
+		PORTC = 0x55;
+		PORTA = 0x00;
+		//PORTA = 0x02;
+		break;
+	}
+	
+	
+}
+
+void set_Duty_cycle(double dutyValue) {
+
+		if (dutyValue != 0) { TCCR3B &= 0x08; }
+		else { TCCR3B |= 0x03; }
+		
+	    OCR3A = (short)(8000000 / (128 * dutyValue)) - 1; 
+		TCNT3 = 0; // resets counter
+
+}
+
+//blue swede, hooked on a feeling: 121 bpm
+
+
+void PWM_on() {
+
+	TCCR3A = (1 << COM3A0);
+	TCCR3B = (1 << WGM32) | (1 << CS31) | (1 << CS30);
+	set_Duty_cycle(0);
+
+}
+
+
+
+void PWM_off() {
+	TCCR3A = 0x00;
+	TCCR3B = 0x00;
+}
+
+double calculate_Mili(double bpm){
+	return 60000.0/bpm + 7;
+}//
+
+void buttonActions(){
+	
+	if (button){
+		
+		_delay_ms(100);
+		button = ~PINB &0x01;
+		if (!button){
+			return;
+		}
+		
+		button_state = wait_for_release;
+		going = !going;
+	}
+	
+	if (going){
+		return;
+	}
+	
+	else if (button2 && bpm < 183){
+		
+		_delay_ms(100);
+		button2 = ~PINB &0x02;
+		if (!button2){
+			return;
+		}
+		
+		button_state = wait_for_release;
+		bpm++;
+		itoa(bpm, bpm_buffer, 10);
+		nokia_lcd_set_cursor(15, 10);
+		nokia_lcd_write_string(bpm_buffer,3);
+		nokia_lcd_render();
+		TimerSet(calculate_Mili(bpm));
+	}
+	else if (button3 && bpm > 60){
+		
+		_delay_ms(100);
+		button3 = ~PINB &0x04;
+		if (!button3){
+			return;
+		}
+		
+		button_state = wait_for_release;
+		bpm--;
+		itoa(bpm, bpm_buffer, 10);
+		if (bpm == 99){
+			nokia_lcd_clear();
+			nokia_lcd_set_cursor(0,0);
+			nokia_lcd_write_string("Current BPM:", 1);
+			nokia_lcd_set_cursor(15, 10);
+			nokia_lcd_write_string(bpm_buffer,3);
+			nokia_lcd_set_cursor(0, 30);
+			nokia_lcd_write_string("Adjust using  buttons", 1);
+			nokia_lcd_render();
+			TimerSet(calculate_Mili(bpm));
+		}
+		else{
+			nokia_lcd_set_cursor(15, 10);
+			nokia_lcd_write_string(bpm_buffer,3);
+			nokia_lcd_render();
+			TimerSet(calculate_Mili(bpm));
+
+		}
+	}
+	
+	
+	else if (button4 && bpm <= 173){
+		
+		_delay_ms(100);
+		button4 = ~PINB &0x08;
+		if (!button4){
+			return;
+		}
+		
+		button_state = wait_for_release;
+		bpm+=10;
+		itoa(bpm, bpm_buffer, 10);
+		nokia_lcd_set_cursor(15, 10);
+		nokia_lcd_write_string(bpm_buffer,3);
+		nokia_lcd_render();
+		TimerSet(calculate_Mili(bpm));
+	}
+	else if (button5 && bpm >= 70){							//sub 10
+		
+		_delay_ms(100);
+		button5 = ~PINB &0x10;
+		if (!button5){
+			return;
+		}
+		
+		button_state = wait_for_release;
+		bpm-= 10;
+		itoa(bpm, bpm_buffer, 10);
+		if (bpm <= 99){
+			nokia_lcd_clear();
+			nokia_lcd_set_cursor(0,0);
+			nokia_lcd_write_string("Current BPM:", 1);
+			nokia_lcd_set_cursor(15, 10);
+			nokia_lcd_write_string(bpm_buffer,3);
+			nokia_lcd_set_cursor(0, 30);
+			nokia_lcd_write_string("Adjust using  buttons", 1);
+			nokia_lcd_render();
+			TimerSet(calculate_Mili(bpm));
+		}
+		else{
+			nokia_lcd_set_cursor(15, 10);
+			nokia_lcd_write_string(bpm_buffer,3);
+			nokia_lcd_render();
+			TimerSet(calculate_Mili(bpm));
+
+		}
+	}
+}
+
+int main(void)
+{
+    /* Replace with your application code */
+	
+	DDRB = 0x40; PORTB = ~0x40;
+	DDRA = 0xFF; PORTA = 0x00;
+	DDRC = 0xFF; PORTC = 0x00;
+	
+	
+	itoa(bpm, bpm_buffer, 10);
+	
+	going = 0;
+	
+	state = left;
+	button_state = wait_for_press;
+	floor_state = one;
+	TimerFlag = 0;
+	TimerSet(calculate_Mili(bpm));
+	TimerOn();
+	PWM_on();
+	itoa(bpm, bpm_buffer, 10);
+	 nokia_lcd_init();
+	 nokia_lcd_clear();
+	 
+	 nokia_lcd_write_string("Current BPM:", 1);
+	 nokia_lcd_set_cursor(15, 10);
+	 nokia_lcd_write_string(bpm_buffer,3);
+	 nokia_lcd_set_cursor(0, 30);
+	 nokia_lcd_write_string("Adjust using  buttons", 1);
+	 nokia_lcd_render();
+	
+    while (1) 
+    {
+
+		while(!TimerFlag){
+			button = ~PINB & 0x01;
+			button2 = ~PINB & 0x02;
+			button3 = ~PINB & 0x04;
+			button4 = ~PINB & 0x08;
+			button5 = ~PINB & 0x10;
+			buttonStuff();
+			};
+		
+		setDance();
+		setDanceFloor();
+		
+		TimerFlag = 0;
+		
+    }
+}
