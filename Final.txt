@@ -1,8 +1,4 @@
 /* Adrian Monges 	among003@ucr.edu
- * Patrick Ong		pong001@ucr.edu
- * Lab Section 21
- * Lab 9 Exercise 1
- * 
  * I acknowledge all content contained herein, excluding
  * template or example code, is my own original work.
  */ 
@@ -36,17 +32,14 @@ enum buttons{wait_for_press, stop_start, add_one, sub_one, add_ten, sub_ten, wai
 
 
 
-void set_PWM(double frequency) {
+void set_DutyCycle(double cycle) {
 
-	static double current_frequency; // Keeps track of the currently set frequency
+	static double current_cycle;
 
-	// Will only update the registers when the frequency changes, otherwise allows
+	
+	if (cycle != current_cycle) {
 
-	// music to play uninterrupted.
-
-	if (frequency != current_frequency) {
-
-		if (!frequency) { TCCR3B &= 0x08; } //stops timer/counter
+		if (!cycle) { TCCR3B &= 0x08; } //stops timer/counter
 
 		else { TCCR3B |= 0x03; } // resumes/continues timer/counter
 
@@ -56,25 +49,25 @@ void set_PWM(double frequency) {
 
 		// 0.954 is smallest frequency that will not result in overflow
 
-		if (frequency < 0.954) { OCR3A = 0xFFFF; }
+		if (cycle < 0.954) { OCR3A = 0xFFFF; }
 
 		
 
 		// prevents OCR0A from underflowing, using prescaler 64     // 31250 is largest frequency that will not result in underflow
 
-		else if (frequency > 31250) { OCR3A = 0x0000; }
+		else if (cycle > 31250) { OCR3A = 0x0000; }
 
 		
 
 		// set OCR3A based on desired frequency
 
-		else { OCR3A = (short)(8000000 / (128 * frequency)) - 1; }
+		else { OCR3A = (short)(8000000 / (128 * cycle)) - 1; }
 
 		
 
 		TCNT3 = 0; // resets counter
 
-		current_frequency = frequency; // Updates the current frequency
+		current_cycle = cycle; // Updates the current frequency
 
 	}
 
@@ -95,7 +88,7 @@ void PWM_on() {
 
 	// CS01 & CS30: Set a prescaler of 64
 
-	set_PWM(0);
+	set_DutyCycle(0);
 
 }
 
@@ -177,6 +170,7 @@ void buttonStuff(){
 					 nokia_lcd_set_cursor(0, 30);
 					 nokia_lcd_write_string("Adjust using  buttons", 1);
 					 nokia_lcd_render();
+					 TimerSet(calculate_Mili(bpm));
 				}
 				else{
 					nokia_lcd_set_cursor(15, 10);
@@ -224,6 +218,7 @@ void buttonStuff(){
 					nokia_lcd_set_cursor(0, 30);
 					nokia_lcd_write_string("Adjust using  buttons", 1);
 					nokia_lcd_render();
+					TimerSet(calculate_Mili(bpm));
 				}
 				else{
 					nokia_lcd_set_cursor(15, 10);
@@ -285,12 +280,12 @@ void setDance(){
 			break;
 		case left:
 			PWM_on();
-			set_PWM(200);
+			set_DutyCycle(200);
 			
 			break;
 		case right:
 			PWM_on();
-			set_PWM(6000);
+			set_DutyCycle(6000);
 			
 			break;
 		
