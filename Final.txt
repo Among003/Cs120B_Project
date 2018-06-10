@@ -6,100 +6,183 @@
 #include <avr/io.h>
 #include <avr/interrupt.h>
 #include <timer.c>
-#include "nokia5110.c"
+#include "nokia5110.c"    //Included library to control the LCD Screen.
 #include <stdlib.h>
 
-//#define button ~PINB &0x01
 
 
-
-unsigned char button;
-unsigned char button2;
-unsigned char button3;
-unsigned char button4;
-unsigned char button5;
- int bpm = 60;
-unsigned char going; 
-char bpm_buffer[200];
-
-
-
-
-enum dance{dance_wait, left, right} state;
-enum dancefloor{floor_wait, one, two} floor_state;	
-enum buttons{wait_for_press, stop_start, add_one, sub_one, add_ten, sub_ten, wait_for_release} button_state;	
+unsigned char button;  // global variable for start/stop
+unsigned char button2;// global variable for +1
+unsigned char button3;// global variable for -1
+unsigned char button4;// global variable for +10
+unsigned char button5;// global variable for -10
+int bpm = 60;  // global variable that holds the current bpm
+unsigned char going; // shared variable that lets setDance() know if the system is moving.
+char bpm_buffer[200];	//buffer char needed to convert bpm (int) to a string
 
 
 
 
-void set_DutyCycle(double cycle) {
+enum dance{dance_wait, left, right} state;  // sets the dance position to be in, or make it wait/go
+enum dancefloor{one, two} floor_state;	//sets the matrix in 1 of 2 positions.  always going to help sync to music
+enum buttons{wait_for_press, wait_for_release} button_state; // state machine that calls button set function if a button click is detected.
+
+void button_function();  // function used to modify variables and rewrite screen as necessary to the button
+void set_DutyCycle(double cycle); // sets the duty cycle of the pwm, which allows setting position of the servo.  This function, and PWM are taken directly from Lab9, just renamed to avoid confusion
+void PWM_on(); //turns on PWM, taken from Lab9
+void PWM_off();// turns off PWM, also taken from Lab9
+double calculate_Mili(double bpm); //calculates the milliseconds 
+
+
+void button_function(){
+	if (button){
+		
+		_delay_ms(100);						// delay used to filter glitches
+		button = ~PINB &0x01;
+		if (!button){						//checks if button was pressed at least 100 ms
+			return;
+		}
+		
+		going = !going;    // sets global variable to either be going or not
+	}
+	
+	if (going){			// checks if the machine is going.  Doesn't allow buttons to be pressed if the servos are going
+		return;
+	}
+	
+	else if (button2 && bpm < 183){
+		
+		_delay_ms(100);							// delay used to filter glitches
+		button2 = ~PINB &0x02;
+		if (!button2){							//checks if button was pressed at least 100 ms
+			return;
+		}
+		
+		button_state = wait_for_release;
+		bpm++;
+		itoa(bpm, bpm_buffer, 10);										//convert int into string
+		nokia_lcd_set_cursor(15, 10);									//place cursor onto string
+		nokia_lcd_write_string(bpm_buffer,3);							//write the bpm buffer
+		nokia_lcd_render();												//render onto string
+		TimerSet(calculate_Mili(bpm));									//set period of how fast the robot rotates
+	}
+	else if (button3 && bpm > 60){
+		
+		_delay_ms(100);								// delay used to filter glitches
+		button3 = ~PINB &0x04;
+		if (!button3){								//checks if button was pressed at least 100 ms
+			return;
+		}
+		
+		button_state = wait_for_release;
+		bpm--;
+		itoa(bpm, bpm_buffer, 10);
+		if (bpm == 99){											//When going from a triple digit to double digit, the screen has to clear the extra digit away
+			nokia_lcd_clear();															
+			nokia_lcd_set_cursor(0,0);																
+			nokia_lcd_write_string("Current BPM:", 1);
+			nokia_lcd_set_cursor(15, 10);
+			nokia_lcd_write_string(bpm_buffer,3);
+			nokia_lcd_set_cursor(0, 30);
+			nokia_lcd_write_string("Adjust using  buttons", 1);
+			nokia_lcd_render();
+			TimerSet(calculate_Mili(bpm));
+		}
+		else{
+			nokia_lcd_set_cursor(15, 10);
+			nokia_lcd_write_string(bpm_buffer,3);
+			nokia_lcd_render();
+			TimerSet(calculate_Mili(bpm));
+
+		}
+	}
+	
+	
+	else if (button4 && bpm <= 173){						//add 10 button
+		
+		_delay_ms(100);															// delay used to filter glitches
+		button4 = ~PINB &0x08;
+		if (!button4){															//checks if button was pressed at least 100 ms
+			return;
+		}
+		
+		button_state = wait_for_release;
+		bpm+=10;
+		itoa(bpm, bpm_buffer, 10);
+		nokia_lcd_set_cursor(15, 10);
+		nokia_lcd_write_string(bpm_buffer,3);
+		nokia_lcd_render();
+		TimerSet(calculate_Mili(bpm));
+	}
+	else if (button5 && bpm >= 70){							//subtract 10 button
+		
+		_delay_ms(100);																// delay used to filter glitches
+		button5 = ~PINB &0x10;
+		if (!button5){																//checks if button was pressed at least 100 ms
+			return;
+		}
+		
+		button_state = wait_for_release;
+		bpm-= 10;
+		itoa(bpm, bpm_buffer, 10);
+		if (bpm <= 99){
+			nokia_lcd_clear();								//When going from a triple digit to double digit, the screen has to clear the extra digit away
+			nokia_lcd_set_cursor(0,0);
+			nokia_lcd_write_string("Current BPM:", 1);
+			nokia_lcd_set_cursor(15, 10);
+			nokia_lcd_write_string(bpm_buffer,3);
+			nokia_lcd_set_cursor(0, 30);
+			nokia_lcd_write_string("Adjust using  buttons", 1);
+			nokia_lcd_render();
+			TimerSet(calculate_Mili(bpm));
+		}
+		else{
+			nokia_lcd_set_cursor(15, 10);
+			nokia_lcd_write_string(bpm_buffer,3);
+			nokia_lcd_render();
+			TimerSet(calculate_Mili(bpm));
+
+		}
+	}
+	
+	
+}
+
+
+void set_DutyCycle(double cycle) {		//taken from lab 9, renamed to avoid confusion
 
 	static double current_cycle;
 
 	
 	if (cycle != current_cycle) {
-
 		if (!cycle) { TCCR3B &= 0x08; } //stops timer/counter
-
 		else { TCCR3B |= 0x03; } // resumes/continues timer/counter
-
-		
-
 		// prevents OCR3A from overflowing, using prescaler 64
-
 		// 0.954 is smallest frequency that will not result in overflow
-
 		if (cycle < 0.954) { OCR3A = 0xFFFF; }
-
-		
-
 		// prevents OCR0A from underflowing, using prescaler 64     // 31250 is largest frequency that will not result in underflow
-
 		else if (cycle > 31250) { OCR3A = 0x0000; }
-
-		
-
 		// set OCR3A based on desired frequency
-
-		else { OCR3A = (short)(8000000 / (128 * cycle)) - 1; }
-
-		
-
+		else { OCR3A = (short)(8000000 / (128 * cycle)) - 1; }      //this is the part that sets the actual duty cycle
 		TCNT3 = 0; // resets counter
-
 		current_cycle = cycle; // Updates the current frequency
-
 	}
-
 }
 
-//blue swede, hooked on a feeling: 121 bpm
 
 
-void PWM_on() {
+void PWM_on() {			//taken from lab 9
 
-	TCCR3A = (1 << COM3A0);
-
-	// COM3A0: Toggle PB3 on compare match between counter and OCR0A
-
+	TCCR3A = (1 << COM3A0);							
 	TCCR3B = (1 << WGM32) | (1 << CS31) | (1 << CS30);
-
-	// WGM02: When counter (TCNT0) matches OCR0A, reset counter
-
-	// CS01 & CS30: Set a prescaler of 64
-
 	set_DutyCycle(0);
-
 }
 
 
 
-void PWM_off() {
-
+void PWM_off() {		//taken from lab 9
 	TCCR3A = 0x00;
-
 	TCCR3B = 0x00;
-
 }
 
 double calculate_Mili(double bpm){
@@ -111,122 +194,22 @@ double calculate_Mili(double bpm){
 	
 }//
 
-void buttonStuff(){
+void buttonStuff(){					//SM that takes care of button input
 	
 	switch(button_state){
 	
 		
 		
 		case wait_for_press:
-			if (button){
-				
-				_delay_ms(100);
-				button = ~PINB &0x01;
-				if (!button){
-					break;
-				}
-				
-				button_state = wait_for_release;
-				going = !going;
-			}
+			button = ~PINB & 0x01;
+			button2 = ~PINB & 0x02;
+			button3 = ~PINB & 0x04;
+			button4 = ~PINB & 0x08;
+			button5 = ~PINB & 0x10;
 			
-			if (going){
-				break;
-			}
-			
-			else if (button2 && bpm < 183){
-				
-				_delay_ms(100);
-				button2 = ~PINB &0x02;
-				if (!button2){
-					break;
-				}
-				
+			if (button || button2|| button3 || button4 || button5){
+				button_function();
 				button_state = wait_for_release;
-				bpm++;
-				itoa(bpm, bpm_buffer, 10);
-				nokia_lcd_set_cursor(15, 10);
-				nokia_lcd_write_string(bpm_buffer,3);
-				nokia_lcd_render();
-				TimerSet(calculate_Mili(bpm));			
-			}
-			else if (button3 && bpm > 60){
-				
-					_delay_ms(100);
-					button3 = ~PINB &0x04;
-					if (!button3){
-						break;
-					}
-				
-				button_state = wait_for_release;
-				bpm--;	
-				itoa(bpm, bpm_buffer, 10);
-				if (bpm == 99){
-					nokia_lcd_clear();
-					nokia_lcd_set_cursor(0,0);
-					 nokia_lcd_write_string("Current BPM:", 1);
-					 nokia_lcd_set_cursor(15, 10);
-					 nokia_lcd_write_string(bpm_buffer,3);
-					 nokia_lcd_set_cursor(0, 30);
-					 nokia_lcd_write_string("Adjust using  buttons", 1);
-					 nokia_lcd_render();
-					 TimerSet(calculate_Mili(bpm));
-				}
-				else{
-					nokia_lcd_set_cursor(15, 10);
-					nokia_lcd_write_string(bpm_buffer,3);
-					nokia_lcd_render();
-					TimerSet(calculate_Mili(bpm));
-
-				}
-			}
-	
-			
-			else if (button4 && bpm <= 173){
-				
-				_delay_ms(100);
-				button4 = ~PINB &0x08;
-				if (!button4){
-					break;
-				}
-				
-				button_state = wait_for_release;
-				bpm+=10;
-				itoa(bpm, bpm_buffer, 10);
-				nokia_lcd_set_cursor(15, 10);
-				nokia_lcd_write_string(bpm_buffer,3);
-				nokia_lcd_render();
-				TimerSet(calculate_Mili(bpm));
-			}
-			else if (button5 && bpm >= 70){							//sub 10
-				
-				_delay_ms(100);
-				button5 = ~PINB &0x10;
-				if (!button5){
-					break;
-				}
-				
-				button_state = wait_for_release;
-				bpm-= 10;
-				itoa(bpm, bpm_buffer, 10);
-				if (bpm <= 99){
-					nokia_lcd_clear();
-					nokia_lcd_set_cursor(0,0);
-					nokia_lcd_write_string("Current BPM:", 1);
-					nokia_lcd_set_cursor(15, 10);
-					nokia_lcd_write_string(bpm_buffer,3);
-					nokia_lcd_set_cursor(0, 30);
-					nokia_lcd_write_string("Adjust using  buttons", 1);
-					nokia_lcd_render();
-					TimerSet(calculate_Mili(bpm));
-				}
-				else{
-					nokia_lcd_set_cursor(15, 10);
-					nokia_lcd_write_string(bpm_buffer,3);
-					nokia_lcd_render();
-					TimerSet(calculate_Mili(bpm));
-
-				}
 			}
 			
 			
@@ -235,6 +218,11 @@ void buttonStuff(){
 			break;
 		
 		case wait_for_release:
+			button = ~PINB & 0x01;
+			button2 = ~PINB & 0x02;
+			button3 = ~PINB & 0x04;
+			button4 = ~PINB & 0x08;
+			button5 = ~PINB & 0x10;
 			if(!button && !button2 &! button3 && !button4 && !button5){
 				button_state = wait_for_press;
 			}
@@ -245,13 +233,12 @@ void buttonStuff(){
 	
 	
 	
-	
 }
 
-void setDance(){
+void setDance(){			
 	switch(state){
 		case dance_wait:
-			if (going){
+			if (going){							//checks global variable to see if the button from button_stuff() set going to 1;
 				PWM_on();
 				state = left;
 			}
@@ -259,14 +246,14 @@ void setDance(){
 			break;
 		
 		case left:
-			if (going){
+			if (going){							//checks if going is 1, else it goes to dance_wait state
 				state = right;
 			}
 			else state = dance_wait;
 			break;
 		
-		case right:
-			if (going){
+		case right:		
+			if (going){						//checks if going is 1, else it goes to dance_wait state
 				state = left;
 			}
 		else state = dance_wait;
@@ -276,16 +263,16 @@ void setDance(){
 	switch(state){
 		
 		case dance_wait:
-			PWM_off();
+			PWM_off();					// stops the pwm so the motor doesn't heat up staying in the same position
 			break;
 		case left:
 			PWM_on();
-			set_DutyCycle(200);
+			set_DutyCycle(200);			// goes all the way to the left, setting to anything lower makes gears grind in the servo
 			
 			break;
 		case right:
 			PWM_on();
-			set_DutyCycle(6000);
+			set_DutyCycle(6000);		// goes all the way to the left, setting to anything higher makes gears grind in the servo
 			
 			break;
 		
@@ -302,23 +289,20 @@ void setDanceFloor(){
 			floor_state = one;
 			break;
 		
-		
-		
 	}
 	
 	
 	
-	switch (floor_state) {
+	switch (floor_state) {					// the values are actually
 		case one:
-		PORTC = 0xAA;			//COLUMNS: Which column has power.
-		PORTA = 0x00;			//ROWS: How many are not lit up.
-		//PORTA = 0x01;
+		PORTC = 0xAA;			//rows that are lit: 01010101	
+		PORTA = 0x00;			// all lights in these rows are on
 		break;
 		
 		case two:
-		PORTC = 0x55;
-		PORTA = 0x00;
-		//PORTA = 0x02;
+		PORTC = 0x55;			//rows that are lit: 10101010
+		PORTA = 0x00;			// all lights in these rows are on
+		
 		break;
 	}
 	
@@ -326,29 +310,25 @@ void setDanceFloor(){
 }
 
 
-
-
 int main(void)
 {
     /* Replace with your application code */
 	
-	DDRB = 0x40; PORTB = ~0x40;
-	DDRA = 0xFF; PORTA = 0x00;
-	DDRC = 0xFF; PORTC = 0x00;
+	DDRB = 0x40; PORTB = ~0x40;			//DDRB is all input ports except for PB6
+	DDRA = 0xFF; PORTA = 0x00;			//DDRA is all output for matrix
+	DDRC = 0xFF; PORTC = 0x00;			//DDRC is all output for matrix
 	
 	
+	itoa(bpm, bpm_buffer, 10);			// string to convernt int into the buffer
 	
-//	sprintf(bpm_buffer, "%f", bpm);
-	itoa(bpm, bpm_buffer, 10);
+	going = 0;							// sets servo moving variable to false
 	
-	going = 0;
-	
-	state = left;
+	state = left;						
 	button_state = wait_for_press;
 	floor_state = one;
 	TimerFlag = 0;
-	TimerSet(calculate_Mili(bpm));
-	TimerOn();
+	TimerSet(calculate_Mili(bpm));		// this is how I have the servo and matrix move.  Setting the timer instead of using tasks allowed for me to keep the bpm constant.  
+	TimerOn();							//With the task scheduler, the bpm was never constant, and would ocassionally go to early or late.  Very weird bug
 	PWM_on();
 	itoa(bpm, bpm_buffer, 10);
 	 nokia_lcd_init();
@@ -365,24 +345,15 @@ int main(void)
     {
 		
 		
-		
 		while(!TimerFlag){
-			button = ~PINB & 0x01;
-			button2 = ~PINB & 0x02;
-			button3 = ~PINB & 0x04;
-			button4 = ~PINB & 0x08;
-			button5 = ~PINB & 0x10;
-			buttonStuff();
+			
 			};
 		
+		buttonStuff();
 		setDance();
 		setDanceFloor();
 		
 		TimerFlag = 0;
-		
-		
-			
-		
-		
+	
     }
 }
